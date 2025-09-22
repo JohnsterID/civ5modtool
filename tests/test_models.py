@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import shutil
 import xml.etree.ElementTree as ET
-from ..core.models import ModProject, FileEntry, Association, Action, EntryPoint
+from modtools.core.models import ModProject, FileEntry, Association, Action, EntryPoint
 
 class TestModProject(unittest.TestCase):
     @classmethod

@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 import tempfile
 import shutil
-from ..core.solution import ModSolution, ProjectReference
+from modtools.core.solution import ModSolution, ProjectReference
 
 class TestModSolution(unittest.TestCase):
     @classmethod

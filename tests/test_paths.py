@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import shutil
-from ..core.paths import (
+from modtools.core.paths import (
     normalize_game_path,
     normalize_system_path,
     paths_equal,
