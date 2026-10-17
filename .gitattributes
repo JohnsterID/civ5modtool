@@ -1,0 +1,2 @@
+# ModBuddy reference files: keep their exact bytes (CRLF, BOM); tests compare against them byte for byte
+tests/data/** -text

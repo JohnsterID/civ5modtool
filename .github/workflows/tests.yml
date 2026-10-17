@@ -1,0 +1,44 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"  # weekly: catch format changes in Vox Populi's own modinfo generator
+
+jobs:
+  unit:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.9", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install pytest
+      - run: python -m pytest tests -q
+
+  vox-populi:
+    # Windows: VP's generate_modinfo.py (the reference) only resolves its "\" paths there
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: LoneGazebo/Community-Patch-DLL
+          path: vp
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /scripts/generate_modinfo.py
+            /(*/
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - run: python -m pytest tests/test_vp_repo.py -v
+        env:
+          VP_REPO: vp
