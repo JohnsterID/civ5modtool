@@ -1,1 +1,2 @@
-PyQt6>=6.4.0
+# No runtime dependencies: modtools uses only the Python standard library (Tkinter for the GUI).
+# Tests: pip install pytest

@@ -126,5 +126,25 @@ class TestModSolution(unittest.TestCase):
         self.assertTrue(any(p.name == "Existing Project" for p in final.projects))
         self.assertTrue(any(p.name == "New Project" for p in final.projects))
 
+    def test_writes_modbuddy_format_exactly(self):
+        """Byte-identical to the ModBuddy-made Community Patch.civ5sln."""
+        sln = ModSolution("Community Patch", projects=[ProjectReference(
+            path="Community Patch.civ5proj", name="Community Patch", guid="{0d66d522-b624-4bc5-acfe-15a0c5b729f4}")])
+        out = self.temp_dir / "exact.civ5sln"
+        sln.write(out)
+        self.assertEqual(out.read_bytes(), self.sln_path.read_bytes())
+
+    def test_add_project_uses_project_guid(self):
+        from modtools.core.models import ModProject
+        from modtools.core.solution import add_project_to_solution
+        project = ModProject(name="(1) Community Patch", project_guid="{0d66d522-b624-4bc5-acfe-15a0c5b729f4}")
+        sln_path = self.temp_dir / "added.civ5sln"
+        add_project_to_solution(sln_path, self.temp_dir / "Community Patch.civ5proj", project)
+        self.assertEqual(sln_path.read_bytes(), self.sln_path.read_bytes())
+        other = ModProject(name="Other", project_guid="{11111111-2222-3333-4444-555555555555}")
+        add_project_to_solution(sln_path, self.temp_dir / "Other.civ5proj", other)
+        add_project_to_solution(sln_path, self.temp_dir / "Other.civ5proj", other)  # no duplicate
+        self.assertEqual([p.name for p in ModSolution.from_sln(sln_path).projects], ["Community Patch", "Other"])
+
 if __name__ == '__main__':
     unittest.main()

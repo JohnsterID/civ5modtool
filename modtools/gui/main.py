@@ -1,488 +1,372 @@
-import sys
+"""Editor window for .modinfo / .civ5proj files (Tkinter, part of Python).
+
+Open a .modinfo or .civ5proj, edit it, save it as either format. Files are
+hashed in the folder of the file being saved, as ModBuddy does.
+"""
 from pathlib import Path
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QFileDialog, QMessageBox, QTabWidget,
-    QLineEdit, QTextEdit, QCheckBox, QGroupBox, QScrollArea
-)
-from PyQt6.QtCore import Qt
-from ..core.models import ModProject, FileEntry, Association, Action, EntryPoint
-import logging
+from typing import Callable, List, Optional, Sequence
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from ..core.civ5proj import read_civ5proj
+from ..core.models import Action, Association, EntryPoint, FileEntry, ModProject, new_mod_guid
+from ..core.modinfo import read_modinfo
+from ..core.validate import ACTION_SETS, ACTION_TYPES, ENTRY_POINT_TYPES, validate_path
+from ..core.xmltext import md5_of, mod_file_path
 
-class ModToolsWindow(QMainWindow):
+FILETYPES = [("Mod files", "*.modinfo *.civ5proj"), ("ModInfo", "*.modinfo"), ("ModBuddy project", "*.civ5proj")]
+FLAGS = [("affects_saves", "Affects saved games"), ("supports_singleplayer", "Supports single player"),
+         ("supports_multiplayer", "Supports multiplayer"), ("supports_hotseat", "Supports hot seat"),
+         ("supports_mac", "Supports Mac"), ("hide_setup_game", "Hide setup game"),
+         ("reload_audio", "Reload audio system"), ("reload_landmark", "Reload landmark system"),
+         ("reload_strategic_view", "Reload strategic view system"), ("reload_unit", "Reload unit system")]
+TEXTS = [("name", "Name"), ("mod_guid", "Mod id"), ("version", "Version"), ("min_save_version", "Min compatible save version"),
+         ("teaser", "Teaser"), ("authors", "Authors"), ("special_thanks", "Special thanks"),
+         ("homepage", "Homepage"), ("stability", "Stability")]
+
+
+class Column:
+    def __init__(self, key: str, title: str, width: int = 120, choices: Sequence[str] = (), boolean: bool = False):
+        self.key, self.title, self.width, self.choices, self.boolean = key, title, width, choices, boolean
+
+
+class RowDialog(tk.Toplevel):
+    """Edit one row: one field per column."""
+
+    def __init__(self, parent, title: str, columns: List[Column], values: dict):
+        super().__init__(parent)
+        self.title(title)
+        self.transient(parent)
+        self.result: Optional[dict] = None
+        self.vars = {}
+        for r, col in enumerate(columns):
+            ttk.Label(self, text=col.title).grid(row=r, column=0, sticky="w", padx=6, pady=3)
+            if col.boolean:
+                var = tk.BooleanVar(value=bool(values.get(col.key)))
+                ttk.Checkbutton(self, variable=var).grid(row=r, column=1, sticky="w", padx=6)
+            else:
+                var = tk.StringVar(value=str(values.get(col.key, "")))
+                widget = (ttk.Combobox(self, textvariable=var, values=list(col.choices), width=60) if col.choices
+                          else ttk.Entry(self, textvariable=var, width=62))
+                widget.grid(row=r, column=1, sticky="we", padx=6)
+            self.vars[col.key] = var
+        buttons = ttk.Frame(self)
+        buttons.grid(row=len(columns), column=0, columnspan=2, pady=6)
+        ttk.Button(buttons, text="OK", command=self._ok).pack(side="left", padx=4)
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="left", padx=4)
+        self.bind("<Return>", lambda e: self._ok())
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def _ok(self):
+        self.result = {k: v.get() for k, v in self.vars.items()}
+        self.destroy()
+
+
+class Table(ttk.Frame):
+    """A list of rows (dicts) with Add / Edit / Remove / Up / Down."""
+
+    def __init__(self, parent, columns: List[Column], new_row: Callable[[], dict], extra_buttons=()):
+        super().__init__(parent)
+        self.columns, self.new_row, self.rows = columns, new_row, []
+        self.tree = ttk.Treeview(self, columns=[c.key for c in columns], show="headings", selectmode="extended")
+        for c in columns:
+            self.tree.heading(c.key, text=c.title)
+            self.tree.column(c.key, width=c.width, stretch=True)
+        scroll = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scroll.set)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+        bar = ttk.Frame(self)
+        bar.grid(row=1, column=0, columnspan=2, sticky="w", pady=4)
+        for text, cmd in [("Add", self.add), ("Edit", self.edit), ("Remove", self.remove),
+                          ("Up", lambda: self.move(-1)), ("Down", lambda: self.move(1)), *extra_buttons]:
+            ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=2)
+        self.tree.bind("<Double-1>", lambda e: self.edit())
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+
+    def set_rows(self, rows: List[dict]):
+        self.rows = [dict(r) for r in rows]
+        self.refresh()
+
+    def refresh(self):
+        self.tree.delete(*self.tree.get_children())
+        for i, row in enumerate(self.rows):
+            shown = [("yes" if row.get(c.key) else "") if c.boolean else row.get(c.key, "") for c in self.columns]
+            self.tree.insert("", "end", iid=str(i), values=shown)
+
+    def _selected(self) -> List[int]:
+        return sorted(int(i) for i in self.tree.selection())
+
+    def _dialog(self, values: dict) -> Optional[dict]:
+        d = RowDialog(self, "Edit", self.columns, values)
+        d.grab_set()
+        self.wait_window(d)
+        if d.result is None:
+            return None
+        return {c.key: (d.result[c.key] if not c.boolean else bool(d.result[c.key])) for c in self.columns}
+
+    def add(self):
+        row = self._dialog(self.new_row())
+        if row is not None:
+            self.rows.append(row)
+            self.refresh()
+
+    def edit(self):
+        sel = self._selected()
+        if sel:
+            row = self._dialog(self.rows[sel[0]])
+            if row is not None:
+                self.rows[sel[0]].update(row)
+                self.refresh()
+
+    def remove(self):
+        for i in reversed(self._selected()):
+            del self.rows[i]
+        self.refresh()
+
+    def move(self, delta: int):
+        sel = self._selected()
+        if len(sel) == 1 and 0 <= sel[0] + delta < len(self.rows):
+            i = sel[0]
+            self.rows[i], self.rows[i + delta] = self.rows[i + delta], self.rows[i]
+            self.refresh()
+            self.tree.selection_set(str(i + delta))
+
+
+ASSOC_COLUMNS = [Column("type", "Type", 70, ("Game", "Dlc", "Mod")), Column("name", "Name", 260),
+                 Column("id", "Id", 280), Column("min_version", "Min", 70), Column("max_version", "Max", 70)]
+
+
+class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Civilization V Mod Tools")
-        self.setMinimumSize(800, 600)
-        
-        # Create central widget and layout
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
-
-        # Create toolbar
-        toolbar = QHBoxLayout()
-        layout.addLayout(toolbar)
-
-        # Add buttons
-        self.load_modinfo_btn = QPushButton("Load .modinfo")
-        self.load_modinfo_btn.clicked.connect(self.load_modinfo)
-        toolbar.addWidget(self.load_modinfo_btn)
-
-        self.load_civ5proj_btn = QPushButton("Load .civ5proj")
-        self.load_civ5proj_btn.clicked.connect(self.load_civ5proj)
-        toolbar.addWidget(self.load_civ5proj_btn)
-
-        self.save_modinfo_btn = QPushButton("Save as .modinfo")
-        self.save_modinfo_btn.clicked.connect(self.save_modinfo)
-        toolbar.addWidget(self.save_modinfo_btn)
-
-        self.save_civ5proj_btn = QPushButton("Save as .civ5proj")
-        self.save_civ5proj_btn.clicked.connect(self.save_civ5proj)
-        toolbar.addWidget(self.save_civ5proj_btn)
-
-        self.create_solution_cb = QCheckBox("Create/Update Solution")
-        self.create_solution_cb.setChecked(True)
-        toolbar.addWidget(self.create_solution_cb)
-
-        toolbar.addStretch()
-
-        # Create tab widget
-        self.tabs = QTabWidget()
-        layout.addWidget(self.tabs)
-
-        # Create tabs
-        self.create_basic_info_tab()
-        self.create_dependencies_tab()
-        self.create_files_tab()
-        self.create_actions_tab()
-        self.create_entry_points_tab()
-
-        # Initialize project
+        self.title("Civilization V Mod Tools")
+        self.geometry("1000x680")
+        self.path: Optional[Path] = None
         self.project = ModProject(name="New Mod")
-        self.update_ui_from_project()
+        self._menu()
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=6, pady=6)
+        nb.add(self._properties_tab(nb), text="Properties")
+        nb.add(self._associations_tab(nb), text="Dependencies")
+        self.files = Table(nb, [Column("path", "Path", 520), Column("import_to_vfs", "Import", 60, boolean=True),
+                                Column("subtype", "SubType", 80), Column("md5", "MD5", 260)],
+                           lambda: {"path": "", "import_to_vfs": False, "subtype": "Lua", "md5": ""},
+                           [("Add files...", self.add_files), ("Refresh MD5s", self.refresh_md5)])
+        nb.add(self.files, text="Files")
+        self.actions = Table(nb, [Column("action_set", "Set", 160, ACTION_SETS),
+                                  Column("action_type", "Type", 140, ACTION_TYPES), Column("filename", "File", 560)],
+                             lambda: {"action_set": "OnModActivated", "action_type": "UpdateDatabase", "filename": ""})
+        nb.add(self.actions, text="Actions")
+        self.entries = Table(nb, [Column("type", "Type", 130, ENTRY_POINT_TYPES), Column("name", "Name", 200),
+                                  Column("description", "Description", 260), Column("file", "File", 340)],
+                             lambda: {"type": "InGameUIAddin", "name": "", "description": "", "file": ""})
+        nb.add(self.entries, text="Entry points")
+        self.status = tk.StringVar(value="New mod")
+        ttk.Label(self, textvariable=self.status, anchor="w").pack(fill="x", padx=6, pady=(0, 4))
+        self.load_project(self.project)
 
-    def create_basic_info_tab(self):
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        scroll.setWidget(widget)
-        self.tabs.addTab(scroll, "Basic Info")
+    # layout ------------------------------------------------------------------
 
-        # Basic info fields
-        self.name_edit = self.add_field(layout, "Name:")
-        self.mod_guid_edit = self.add_field(layout, "Mod GUID:")
-        self.version_edit = self.add_field(layout, "Version:")
-        self.teaser_edit = self.add_field(layout, "Teaser:")
-        
-        self.description_edit = QTextEdit()
-        layout.addWidget(QLabel("Description:"))
-        layout.addWidget(self.description_edit)
-        
-        self.authors_edit = self.add_field(layout, "Authors:")
-        self.homepage_edit = self.add_field(layout, "Homepage:")
+    def _menu(self):
+        bar = tk.Menu(self)
+        m = tk.Menu(bar, tearoff=False)
+        m.add_command(label="New", command=self.new, accelerator="Ctrl+N")
+        m.add_command(label="Open...", command=self.open_dialog, accelerator="Ctrl+O")
+        m.add_command(label="Save", command=self.save, accelerator="Ctrl+S")
+        m.add_command(label="Save as .modinfo...", command=lambda: self.save_as(".modinfo"))
+        m.add_command(label="Save as .civ5proj...", command=lambda: self.save_as(".civ5proj"))
+        m.add_separator()
+        m.add_command(label="Validate", command=self.validate)
+        m.add_separator()
+        m.add_command(label="Quit", command=self.destroy)
+        bar.add_cascade(label="File", menu=m)
+        self.config(menu=bar)
+        self.bind_all("<Control-n>", lambda e: self.new())
+        self.bind_all("<Control-o>", lambda e: self.open_dialog())
+        self.bind_all("<Control-s>", lambda e: self.save())
 
-        # Support flags
-        flags_group = QGroupBox("Support Flags")
-        flags_layout = QVBoxLayout()
-        flags_group.setLayout(flags_layout)
-        layout.addWidget(flags_group)
+    def _properties_tab(self, parent):
+        f = ttk.Frame(parent, padding=8)
+        self.text_vars = {}
+        for r, (key, label) in enumerate(TEXTS):
+            ttk.Label(f, text=label).grid(row=r, column=0, sticky="w", pady=2)
+            var = tk.StringVar()
+            ttk.Entry(f, textvariable=var, width=80).grid(row=r, column=1, sticky="we", pady=2)
+            self.text_vars[key] = var
+        ttk.Button(f, text="New id", command=lambda: self.text_vars["mod_guid"].set(new_mod_guid())).grid(row=1, column=2, padx=4)
+        r = len(TEXTS)
+        ttk.Label(f, text="Description").grid(row=r, column=0, sticky="nw", pady=2)
+        self.description = tk.Text(f, height=8, width=80, wrap="word")
+        self.description.grid(row=r, column=1, sticky="nsew", pady=2)
+        flags = ttk.LabelFrame(f, text="Flags", padding=6)
+        flags.grid(row=r + 1, column=0, columnspan=3, sticky="we", pady=6)
+        self.flag_vars = {}
+        for i, (key, label) in enumerate(FLAGS):
+            var = tk.BooleanVar()
+            ttk.Checkbutton(flags, text=label, variable=var).grid(row=i // 3, column=i % 3, sticky="w", padx=6)
+            self.flag_vars[key] = var
+        f.columnconfigure(1, weight=1)
+        f.rowconfigure(r, weight=1)
+        return f
 
-        self.affects_saves_cb = QCheckBox("Affects Saved Games")
-        flags_layout.addWidget(self.affects_saves_cb)
-        
-        self.supports_sp_cb = QCheckBox("Supports Single Player")
-        flags_layout.addWidget(self.supports_sp_cb)
-        
-        self.supports_mp_cb = QCheckBox("Supports Multiplayer")
-        flags_layout.addWidget(self.supports_mp_cb)
-        
-        self.supports_hotseat_cb = QCheckBox("Supports Hot Seat")
-        flags_layout.addWidget(self.supports_hotseat_cb)
-        
-        self.supports_mac_cb = QCheckBox("Supports Mac")
-        flags_layout.addWidget(self.supports_mac_cb)
-        
-        self.hide_setup_cb = QCheckBox("Hide in Setup")
-        flags_layout.addWidget(self.hide_setup_cb)
+    def _associations_tab(self, parent):
+        f = ttk.Frame(parent, padding=4)
+        self.assoc = {}
+        for i, (key, title) in enumerate([("dependencies", "Dependencies"), ("references", "References"),
+                                          ("blockers", "Blocks")]):
+            box = ttk.LabelFrame(f, text=title, padding=4)
+            box.grid(row=i, column=0, sticky="nsew", pady=3)
+            t = Table(box, ASSOC_COLUMNS, lambda: {"type": "Mod", "name": "", "id": "", "min_version": "0",
+                                                   "max_version": "999"})
+            t.pack(fill="both", expand=True)
+            self.assoc[key] = t
+            f.rowconfigure(i, weight=1)
+        f.columnconfigure(0, weight=1)
+        return f
 
-        layout.addStretch()
+    # model <-> widgets -----------------------------------------------------
 
-    def create_dependencies_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        self.tabs.addTab(widget, "Dependencies")
+    def load_project(self, p: ModProject):
+        self.project = p
+        for key, var in self.text_vars.items():
+            var.set(getattr(p, key))
+        self.description.delete("1.0", "end")
+        self.description.insert("1.0", p.description)
+        for key, var in self.flag_vars.items():
+            var.set(getattr(p, key))
+        for key, table in self.assoc.items():
+            table.set_rows([vars(a) for a in getattr(p, key)])
+        self.files.set_rows([vars(f) for f in p.files])
+        self.actions.set_rows([vars(a) for a in p.actions])
+        self.entries.set_rows([vars(e) for e in p.entry_points])
 
-        # Dependencies list
-        deps_group = QGroupBox("Dependencies")
-        deps_layout = QVBoxLayout()
-        deps_group.setLayout(deps_layout)
-        layout.addWidget(deps_group)
+    def collect(self) -> ModProject:
+        """The project as currently shown; fields the window does not show
+        (ProjectGuid, folders, AssemblyName, ...) are kept from the loaded file."""
+        p = self.project
+        for key, var in self.text_vars.items():
+            setattr(p, key, var.get().strip() if key != "special_thanks" else var.get())
+        p.description = self.description.get("1.0", "end-1c")
+        for key, var in self.flag_vars.items():
+            setattr(p, key, bool(var.get()))
+        for key, table in self.assoc.items():
+            setattr(p, key, [Association(**r) for r in table.rows])
+        p.files = [FileEntry(**r) for r in self.files.rows]
+        p.actions = [Action(**r) for r in self.actions.rows]
+        p.entry_points = [EntryPoint(**r) for r in self.entries.rows]
+        return p
 
-        # Add dependency button
-        add_dep_btn = QPushButton("Add Dependency")
-        add_dep_btn.clicked.connect(self.add_dependency)
-        deps_layout.addWidget(add_dep_btn)
+    # commands ----------------------------------------------------------------
 
-        # Dependencies list widget
-        self.deps_list = QVBoxLayout()
-        deps_layout.addLayout(self.deps_list)
+    def mod_dir(self) -> Optional[Path]:
+        return self.path.parent if self.path else None
 
-        # Blockers
-        blocks_group = QGroupBox("Blockers")
-        blocks_layout = QVBoxLayout()
-        blocks_group.setLayout(blocks_layout)
-        layout.addWidget(blocks_group)
+    def new(self):
+        self.path = None
+        self.load_project(ModProject(name="New Mod"))
+        self.status.set("New mod")
 
-        # Add blocker button
-        add_block_btn = QPushButton("Add Blocker")
-        add_block_btn.clicked.connect(self.add_blocker)
-        blocks_layout.addWidget(add_block_btn)
+    def open_dialog(self):
+        name = filedialog.askopenfilename(filetypes=FILETYPES)
+        if name:
+            self.open(Path(name))
 
-        # Blockers list widget
-        self.blocks_list = QVBoxLayout()
-        blocks_layout.addLayout(self.blocks_list)
+    def open(self, path: Path):
+        try:
+            p = read_civ5proj(path) if path.suffix.lower() == ".civ5proj" else read_modinfo(path)
+        except Exception as e:  # noqa: BLE001 - shown to the user
+            messagebox.showerror("Open", f"{path.name}: {e}")
+            return
+        self.path = path
+        self.load_project(p)
+        self.title(f"{path.name} - Civilization V Mod Tools")
+        self.status.set(f"{path}: {len(p.files)} files, {len(p.actions)} actions, {len(p.entry_points)} entry points")
 
-        layout.addStretch()
+    def save(self):
+        if self.path is None:
+            self.save_as(".modinfo")
+        else:
+            self.write(self.path)
 
-    def create_files_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        self.tabs.addTab(widget, "Files")
+    def save_as(self, suffix: str):
+        p = self.collect()
+        default = p.modinfo_filename() if suffix == ".modinfo" else f"{p.base_name}.civ5proj"
+        name = filedialog.asksaveasfilename(defaultextension=suffix, initialfile=default,
+                                            initialdir=str(self.mod_dir() or Path.cwd()),
+                                            filetypes=[(suffix, f"*{suffix}")])
+        if name:
+            self.write(Path(name))
 
-        # Add file button
-        add_file_btn = QPushButton("Add File")
-        add_file_btn.clicked.connect(self.add_file)
-        layout.addWidget(add_file_btn)
+    def write(self, path: Path):
+        p = self.collect()
+        try:
+            if path.suffix.lower() == ".civ5proj":
+                p.write_civ5proj(path, create_solution=True)
+                note = f"also wrote {path.with_suffix('.civ5sln').name}"
+            else:
+                missing = p.write_modinfo(path)
+                note = f"{len(missing)} listed files not found next to it" if missing else "all files hashed"
+        except Exception as e:  # noqa: BLE001 - shown to the user
+            messagebox.showerror("Save", f"{path.name}: {e}")
+            return
+        self.path = path
+        self.title(f"{path.name} - Civilization V Mod Tools")
+        self.status.set(f"saved {path} ({note})")
 
-        # Files list
-        self.files_list = QVBoxLayout()
-        layout.addLayout(self.files_list)
-        layout.addStretch()
-
-    def create_actions_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        self.tabs.addTab(widget, "Actions")
-
-        # Add action button
-        add_action_btn = QPushButton("Add Action")
-        add_action_btn.clicked.connect(self.add_action)
-        layout.addWidget(add_action_btn)
-
-        # Actions list
-        self.actions_list = QVBoxLayout()
-        layout.addLayout(self.actions_list)
-        layout.addStretch()
-
-    def create_entry_points_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        self.tabs.addTab(widget, "Entry Points")
-
-        # Add entry point button
-        add_ep_btn = QPushButton("Add Entry Point")
-        add_ep_btn.clicked.connect(self.add_entry_point)
-        layout.addWidget(add_ep_btn)
-
-        # Entry points list
-        self.entry_points_list = QVBoxLayout()
-        layout.addLayout(self.entry_points_list)
-        layout.addStretch()
-
-    def add_field(self, layout, label_text):
-        label = QLabel(label_text)
-        edit = QLineEdit()
-        layout.addWidget(label)
-        layout.addWidget(edit)
-        return edit
-
-    def update_ui_from_project(self):
-        # Update basic info
-        self.name_edit.setText(self.project.name)
-        self.mod_guid_edit.setText(self.project.mod_guid)
-        self.version_edit.setText(self.project.version)
-        self.teaser_edit.setText(self.project.teaser)
-        self.description_edit.setText(self.project.description)
-        self.authors_edit.setText(self.project.authors)
-        self.homepage_edit.setText(self.project.homepage)
-
-        # Update flags
-        self.affects_saves_cb.setChecked(self.project.affects_saves)
-        self.supports_sp_cb.setChecked(self.project.supports_singleplayer)
-        self.supports_mp_cb.setChecked(self.project.supports_multiplayer)
-        self.supports_hotseat_cb.setChecked(self.project.supports_hotseat)
-        self.supports_mac_cb.setChecked(self.project.supports_mac)
-        self.hide_setup_cb.setChecked(self.project.hide_setup_game)
-
-        # Clear and rebuild lists
-        self.clear_layout(self.deps_list)
-        self.clear_layout(self.blocks_list)
-        self.clear_layout(self.files_list)
-        self.clear_layout(self.actions_list)
-        self.clear_layout(self.entry_points_list)
-
-        # Rebuild dependencies
-        for dep in self.project.dependencies:
-            self.add_dependency_widget(dep)
-
-        # Rebuild blockers
-        for block in self.project.blockers:
-            self.add_blocker_widget(block)
-
-        # Rebuild files
-        for file in self.project.files:
-            self.add_file_widget(file)
-
-        # Rebuild actions
-        for action in self.project.actions:
-            self.add_action_widget(action)
-
-        # Rebuild entry points
-        for ep in self.project.entry_points:
-            self.add_entry_point_widget(ep)
-
-    def update_project_from_ui(self):
-        # Update basic info
-        self.project.name = self.name_edit.text()
-        self.project.mod_guid = self.mod_guid_edit.text()
-        self.project.version = self.version_edit.text()
-        self.project.teaser = self.teaser_edit.text()
-        self.project.description = self.description_edit.toPlainText()
-        self.project.authors = self.authors_edit.text()
-        self.project.homepage = self.homepage_edit.text()
-
-        # Update flags
-        self.project.affects_saves = self.affects_saves_cb.isChecked()
-        self.project.supports_singleplayer = self.supports_sp_cb.isChecked()
-        self.project.supports_multiplayer = self.supports_mp_cb.isChecked()
-        self.project.supports_hotseat = self.supports_hotseat_cb.isChecked()
-        self.project.supports_mac = self.supports_mac_cb.isChecked()
-        self.project.hide_setup_game = self.hide_setup_cb.isChecked()
-
-    @staticmethod
-    def clear_layout(layout):
-        while layout.count():
-            child = layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-    def load_modinfo(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open .modinfo file", "", "ModInfo Files (*.modinfo)")
-        if file_path:
+    def add_files(self):
+        base = self.mod_dir()
+        if base is None:
+            messagebox.showinfo("Add files", "Save or open the mod first: paths are relative to its folder.")
+            return
+        for name in filedialog.askopenfilenames(initialdir=str(base)):
             try:
-                self.project = ModProject.from_modinfo(Path(file_path))
-                self.update_ui_from_project()
-                QMessageBox.information(self, "Success", "ModInfo file loaded successfully")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load ModInfo file: {e}")
+                rel = Path(name).resolve().relative_to(base.resolve())
+            except ValueError:
+                messagebox.showwarning("Add files", f"{name} is outside the mod folder {base}")
+                continue
+            path = str(rel).replace("/", "\\")
+            if all(r["path"].lower() != path.lower() for r in self.files.rows):
+                self.files.rows.append({"path": path, "import_to_vfs": not path.lower().endswith((".sql", ".xml")),
+                                        "subtype": "Lua", "md5": md5_of(Path(name))})
+        self.files.refresh()
 
-    def load_civ5proj(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open .civ5proj file", "", "Civ5Proj Files (*.civ5proj)")
-        if file_path:
-            try:
-                self.project = ModProject.from_civ5proj(Path(file_path))
-                self.update_ui_from_project()
-                QMessageBox.information(self, "Success", "Civ5Proj file loaded successfully")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load Civ5Proj file: {e}")
+    def refresh_md5(self):
+        base = self.mod_dir()
+        if base is None:
+            return
+        missing = 0
+        for r in self.files.rows:
+            disk = mod_file_path(base, r["path"])
+            if disk.is_file():
+                r["md5"] = md5_of(disk)
+            else:
+                missing += 1
+        self.files.refresh()
+        self.status.set(f"MD5s refreshed; {missing} files not found")
 
-    def save_modinfo(self):
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save .modinfo file", "", "ModInfo Files (*.modinfo)")
-        if file_path:
-            try:
-                self.update_project_from_ui()
-                self.project.write_modinfo(Path(file_path))
-                QMessageBox.information(self, "Success", "ModInfo file saved successfully")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to save ModInfo file: {e}")
+    def validate(self):
+        if self.path is None:
+            messagebox.showinfo("Validate", "Save the mod first.")
+            return
+        issues = validate_path(self.path)
+        text = "\n".join(str(i) for i in issues) or "No problems found."
+        win = tk.Toplevel(self)
+        win.title(f"Validate {self.path.name}")
+        box = tk.Text(win, width=110, height=30, wrap="none")
+        box.insert("1.0", text)
+        box.configure(state="disabled")
+        box.pack(fill="both", expand=True)
 
-    def save_civ5proj(self):
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save .civ5proj file", "", "Civ5Proj Files (*.civ5proj)")
-        if file_path:
-            try:
-                self.update_project_from_ui()
-                create_solution = self.create_solution_cb.isChecked()
-                output_path = Path(file_path)
-                self.project.write_civ5proj(output_path, create_solution=create_solution)
-                
-                msg = "Civ5Proj file saved successfully"
-                if create_solution:
-                    msg += f"\nSolution file created/updated: {output_path.with_suffix('.civ5sln')}"
-                QMessageBox.information(self, "Success", msg)
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to save Civ5Proj file: {e}")
 
-    def add_dependency(self):
-        dep = Association(type="Game")
-        self.project.dependencies.append(dep)
-        self.add_dependency_widget(dep)
+def main(path: Optional[str] = None) -> int:
+    app = App()
+    if path:
+        app.open(Path(path))
+    app.mainloop()
+    return 0
 
-    def add_blocker(self):
-        block = Association(type="Mod")
-        self.project.blockers.append(block)
-        self.add_blocker_widget(block)
 
-    def add_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select file to add")
-        if file_path:
-            file = FileEntry(path=file_path, import_to_vfs=True)
-            self.project.files.append(file)
-            self.add_file_widget(file)
-
-    def add_action(self):
-        action = Action(action_set="OnModActivated", action_type="UpdateDatabase", filename="")
-        self.project.actions.append(action)
-        self.add_action_widget(action)
-
-    def add_entry_point(self):
-        ep = EntryPoint(type="InGameUIAddin", file="")
-        self.project.entry_points.append(ep)
-        self.add_entry_point_widget(ep)
-
-    def add_dependency_widget(self, dep):
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        
-        type_edit = QLineEdit(dep.type)
-        name_edit = QLineEdit(dep.name)
-        id_edit = QLineEdit(dep.id)
-        min_ver_edit = QLineEdit(dep.min_version)
-        max_ver_edit = QLineEdit(dep.max_version)
-        
-        layout.addWidget(QLabel("Type:"))
-        layout.addWidget(type_edit)
-        layout.addWidget(QLabel("Name:"))
-        layout.addWidget(name_edit)
-        layout.addWidget(QLabel("ID:"))
-        layout.addWidget(id_edit)
-        layout.addWidget(QLabel("Min Ver:"))
-        layout.addWidget(min_ver_edit)
-        layout.addWidget(QLabel("Max Ver:"))
-        layout.addWidget(max_ver_edit)
-        
-        remove_btn = QPushButton("Remove")
-        remove_btn.clicked.connect(lambda: self.remove_dependency(widget, dep))
-        layout.addWidget(remove_btn)
-        
-        self.deps_list.addWidget(widget)
-
-    def add_blocker_widget(self, block):
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        
-        name_edit = QLineEdit(block.name)
-        id_edit = QLineEdit(block.id)
-        min_ver_edit = QLineEdit(block.min_version)
-        max_ver_edit = QLineEdit(block.max_version)
-        
-        layout.addWidget(QLabel("Name:"))
-        layout.addWidget(name_edit)
-        layout.addWidget(QLabel("ID:"))
-        layout.addWidget(id_edit)
-        layout.addWidget(QLabel("Min Ver:"))
-        layout.addWidget(min_ver_edit)
-        layout.addWidget(QLabel("Max Ver:"))
-        layout.addWidget(max_ver_edit)
-        
-        remove_btn = QPushButton("Remove")
-        remove_btn.clicked.connect(lambda: self.remove_blocker(widget, block))
-        layout.addWidget(remove_btn)
-        
-        self.blocks_list.addWidget(widget)
-
-    def add_file_widget(self, file):
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        
-        path_edit = QLineEdit(file.path)
-        import_cb = QCheckBox("Import to VFS")
-        import_cb.setChecked(file.import_to_vfs)
-        
-        layout.addWidget(path_edit)
-        layout.addWidget(import_cb)
-        
-        remove_btn = QPushButton("Remove")
-        remove_btn.clicked.connect(lambda: self.remove_file(widget, file))
-        layout.addWidget(remove_btn)
-        
-        self.files_list.addWidget(widget)
-
-    def add_action_widget(self, action):
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        
-        set_edit = QLineEdit(action.action_set)
-        type_edit = QLineEdit(action.action_type)
-        file_edit = QLineEdit(action.filename)
-        
-        layout.addWidget(QLabel("Set:"))
-        layout.addWidget(set_edit)
-        layout.addWidget(QLabel("Type:"))
-        layout.addWidget(type_edit)
-        layout.addWidget(QLabel("File:"))
-        layout.addWidget(file_edit)
-        
-        remove_btn = QPushButton("Remove")
-        remove_btn.clicked.connect(lambda: self.remove_action(widget, action))
-        layout.addWidget(remove_btn)
-        
-        self.actions_list.addWidget(widget)
-
-    def add_entry_point_widget(self, ep):
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        
-        type_edit = QLineEdit(ep.type)
-        file_edit = QLineEdit(ep.file)
-        name_edit = QLineEdit(ep.name)
-        desc_edit = QLineEdit(ep.description)
-        
-        layout.addWidget(QLabel("Type:"))
-        layout.addWidget(type_edit)
-        layout.addWidget(QLabel("File:"))
-        layout.addWidget(file_edit)
-        layout.addWidget(QLabel("Name:"))
-        layout.addWidget(name_edit)
-        layout.addWidget(QLabel("Desc:"))
-        layout.addWidget(desc_edit)
-        
-        remove_btn = QPushButton("Remove")
-        remove_btn.clicked.connect(lambda: self.remove_entry_point(widget, ep))
-        layout.addWidget(remove_btn)
-        
-        self.entry_points_list.addWidget(widget)
-
-    def remove_dependency(self, widget, dep):
-        self.project.dependencies.remove(dep)
-        widget.deleteLater()
-
-    def remove_blocker(self, widget, block):
-        self.project.blockers.remove(block)
-        widget.deleteLater()
-
-    def remove_file(self, widget, file):
-        self.project.files.remove(file)
-        widget.deleteLater()
-
-    def remove_action(self, widget, action):
-        self.project.actions.remove(action)
-        widget.deleteLater()
-
-    def remove_entry_point(self, widget, ep):
-        self.project.entry_points.remove(ep)
-        widget.deleteLater()
-
-def main():
-    app = QApplication(sys.argv)
-    window = ModToolsWindow()
-    window.show()
-    return app.exec()
+if __name__ == "__main__":
+    main()

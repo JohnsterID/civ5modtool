@@ -1,187 +1,108 @@
-# Civilization V Mod Info (.modinfo) Schema
+# .modinfo
 
-## Overview
-The .modinfo file is the final mod descriptor used by Civilization V to load and manage mods. It contains all necessary information about the mod, its dependencies, and its content.
+The file the game loads. Two sources describe it here:
 
-## File Format
-- XML format with UTF-8 encoding
-- Root element: `Mod`
-- No namespace required
+- **Written by:** ModBuddy's build, and Vox Populi's `scripts/generate_modinfo.py`, which reproduces it. modtools
+  writes the same bytes.
+- **Read by:** `Modding::PackageManager::LoadModInfo` in the game (IDA, Linux `Civ5XP` with symbols; the
+  Windows EXEs share the code). It copies everything into the modding database
+  (`Mods`, `ModProperties`, `ModRelationships`, `DlcRelationships`, `GameVersionRelationships`, `ModFiles`,
+  `ModActions`, `ModEntryPoints`).
 
-## Schema Structure
+## Layout (as written)
+
+UTF-8 with BOM, two-space indent. ModBuddy: CRLF, no newline at the end. `generate_modinfo.py`: LF, newline at
+the end (modtools `--style modbuddy` / `--style vp`).
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
-<Mod id="{guid}" version="version_number">
-    <!-- Basic Properties -->
-    <Properties>
-        <Name>Required. Display name of the mod</Name>
-        <Teaser>Required. Short description</Teaser>
-        <Description>Required. Full description</Description>
-        <Authors>Required. List of authors</Authors>
-        <Homepage>Optional. URL to mod's homepage</Homepage>
-        
-        <!-- Support Flags (all required, values: 0 or 1) -->
-        <SupportsSinglePlayer>Required. Single player support</SupportsSinglePlayer>
-        <SupportsMultiplayer>Required. Multiplayer support</SupportsMultiplayer>
-        <SupportsHotSeat>Required. Hot seat support</SupportsHotSeat>
-        <SupportsMac>Required. Mac support</SupportsMac>
-        
-        <!-- System Properties (all required, values: 0 or 1) -->
-        <AffectsSavedGames>Required. Whether affects save games</AffectsSavedGames>
-        <MinCompatibleSaveVersion>Required. Minimum compatible save version</MinCompatibleSaveVersion>
-        <ReloadAudioSystem>Required. Whether to reload audio</ReloadAudioSystem>
-        <ReloadLandmarkSystem>Required. Whether to reload landmarks</ReloadLandmarkSystem>
-        <ReloadStrategicViewSystem>Required. Whether to reload strategic view</ReloadStrategicViewSystem>
-        <ReloadUnitSystem>Required. Whether to reload units</ReloadUnitSystem>
-        <HideSetupGame>Optional. Whether to hide in setup (0 or 1)</HideSetupGame>
-    </Properties>
-
-    <!-- Dependencies -->
-    <Dependencies>
-        <!-- Game Dependency -->
-        <Game minversion="min_ver" maxversion="max_ver" />
-        
-        <!-- DLC Dependencies -->
-        <Dlc id="{guid}" minversion="min_ver" maxversion="max_ver" />
-    </Dependencies>
-
-    <!-- References (always included, can be empty) -->
-    <References />
-
-    <!-- Blocked Mods -->
-    <Blocks>
-        <Mod id="{guid}" minversion="min_ver" maxversion="max_ver" title="mod_name" />
-    </Blocks>
-
-    <!-- Files -->
-    <Files>
-        <File import="0/1" md5="MD5_HASH">path/to/file</File>
-    </Files>
-
-    <!-- Actions -->
-    <Actions>
-        <!-- OnModActivated Actions -->
-        <OnModActivated>
-            <UpdateDatabase>path/to/sql/or/xml</UpdateDatabase>
-            <SetDllPath>path/to/dll</SetDllPath>
-        </OnModActivated>
-        
-        <!-- Other Action Sets -->
-        <OnGetDLLPath>
-            <SetDllPath>path/to/dll</SetDllPath>
-        </OnGetDLLPath>
-    </Actions>
-
-    <!-- Entry Points -->
-    <EntryPoints>
-        <EntryPoint type="entry_type" file="path/to/file">
-            <Name>Optional. Display name</Name>
-            <Description>Optional. Description</Description>
-        </EntryPoint>
-    </EntryPoints>
+<Mod id="d1b6328c-ff44-4b0d-aad7-c657f83610cd" version="151">
+  <Properties>
+    <Name>(1) Community Patch</Name>
+    <Teaser>...</Teaser>
+    <Description>...</Description>
+    <Authors>...</Authors>
+    <SpecialThanks>...</SpecialThanks>            <!-- only if not empty -->
+    <HideSetupGame>0</HideSetupGame>
+    <Homepage>...</Homepage>                      <!-- only if not empty -->
+    <AffectsSavedGames>1</AffectsSavedGames>
+    <MinCompatibleSaveVersion>151</MinCompatibleSaveVersion>   <!-- only if not 0 -->
+    <SupportsSinglePlayer>1</SupportsSinglePlayer>
+    <SupportsMultiplayer>1</SupportsMultiplayer>
+    <SupportsHotSeat>1</SupportsHotSeat>
+    <SupportsMac>1</SupportsMac>
+    <ReloadAudioSystem>0</ReloadAudioSystem>
+    <ReloadLandmarkSystem>1</ReloadLandmarkSystem>
+    <ReloadStrategicViewSystem>1</ReloadStrategicViewSystem>
+    <ReloadUnitSystem>1</ReloadUnitSystem>
+  </Properties>
+  <Dependencies>                                  <!-- <Dependencies /> when empty; same for the next two -->
+    <Game minversion="1.0.3.124" maxversion="1.0.3.999" />
+    <Dlc id="7459BA32-5764-44ae-8E95-01AD0E0EFD48" minversion="0" maxversion="999" />
+    <Mod id="..." minversion="151" maxversion="999" title="(1) Community Patch" />
+  </Dependencies>
+  <References>
+    <Mod id="..." minversion="17" maxversion="999" title="(2) Vox Populi" />
+  </References>
+  <Blocks>
+    <Mod id="..." minversion="0" maxversion="999" title="..." />
+  </Blocks>
+  <Files>
+    <File md5="0123...CDEF" import="1">LUA/Foo.lua</File>        <!-- every file has an md5 -->
+    <File md5="..." import="0">Database Changes/Foo.sql</File>
+  </Files>
+  <Actions>                                       <!-- grouped by set, in first-use order -->
+    <OnModActivated>
+      <UpdateDatabase>Database Changes/Foo.sql</UpdateDatabase>
+    </OnModActivated>
+    <OnGetDLLPath>
+      <SetDllPath>CvGameCore_Expansion2.dll</SetDllPath>
+    </OnGetDLLPath>
+  </Actions>
+  <EntryPoints>
+    <EntryPoint type="InGameUIAddin" file="LUA/Foo.xml">
+      <Name>Foo</Name>
+      <Description>...</Description>
+    </EntryPoint>
+  </EntryPoints>
 </Mod>
 ```
 
-## Required Root Attributes
-1. `id`: GUID - Unique identifier of the mod
-2. `version`: String - Version number of the mod
+- File paths and entry point `file`s use `/`. Action file names are written as the project had them (VP mixes `/`
+  and `\`).
+- Text and attribute values escape `&`, `<`, `>` and `"`.
+- The file name is `<Name> (v <version>).modinfo`.
 
-## Required Properties
-1. Core Properties:
-   - `Name`: String - Display name
-   - `Teaser`: String - Short description
-   - `Description`: String - Full description
-   - `Authors`: String - Author list
+## What the game reads
 
-2. Support Flags (all values 0 or 1):
-   - `SupportsSinglePlayer`
-   - `SupportsMultiplayer`
-   - `SupportsHotSeat`
-   - `SupportsMac`
+| Item | How the game reads it |
+|---|---|
+| `<Mod id>` | text. |
+| `<Mod version>` | integer. If it is not an integer ≥ 0 the mod is not recorded. |
+| `<Properties>` | generic: every child is stored as name/value text. The EXE looks up `SupportsSinglePlayer`, `SupportsMultiplayer`, `AffectsSavedGames`, `Reload*System`, `Name`, `Teaser`, and `MinCompatibleSaveVersion` (SQL `Value <= ?` for save compatibility); the UI Lua reads others with `Modding.GetModProperty`. |
+| Booleans | `t…`/`T…` true, `f…`/`F…` false, otherwise a number (`FXmlNVPair::GetVal(bool&)`), so `1`/`0` and `true`/`false` both work. |
+| `Dependencies` / `References` / `Blocks` | children `Mod` (`id`, `minversion`, `maxversion` as integers, `title`), `Dlc` (`id`, integer versions), `Game` (`minversion`/`maxversion` as text). A missing `maxversion` means no upper limit. |
+| `<File>` | text = path (stored as written, plus a lower-cased `EvaluatedPath` under the mod folder, 260-character buffers); `md5` stored as text; `import` boolean, **default 1** when absent. |
+| `<Actions>` | each child is a set (`Location`), each grandchild an action (`Action`, text = `Param1`). Registered action types: `UpdateDatabase`, `UpdateUserData`, `ExecuteScript`, `SetDllPath` (`CvModdingFrameworkAppSide::Initialize`). Sets used: `OnModActivated`, `OnGetDLLPath`, `OnCreateModUserData`. |
+| `<EntryPoints>` | `type`, `file`, `Name`, `Description`. Types looked up: `InGameUIAddin`, `DiplomacyUIAddin`, `CityViewUIAddin`, `Custom` (UI Lua), `Map`, `MapScript` (EXE). `Map`/`MapScript` are joined to the files by `ModEntryPoints.File = ModFiles.Path`, an exact match. |
 
-3. System Properties (all values 0 or 1):
-   - `AffectsSavedGames`
-   - `MinCompatibleSaveVersion`
-   - `ReloadAudioSystem`
-   - `ReloadLandmarkSystem`
-   - `ReloadStrategicViewSystem`
-   - `ReloadUnitSystem`
+## MD5s
 
-## Optional Properties
-1. `Homepage`: String - URL
-2. `HideSetupGame`: Integer (0 or 1)
+The MD5s are only compared by `Modding::Installer::CanInstallMod`, when a packaged `.civ5mod` (Steam
+Workshop / mod browser) is installed: each file's MD5 is computed and compared case-insensitively, and the
+first mismatch aborts the install with error 16. A mod placed in the MODS folder (as VP's installer does) is
+read by `LoadModInfo` without any MD5 check. `Modding.GetEvaluatedFilePath` returns the stored MD5 to Lua.
 
-## Dependencies Section
-1. Game dependency (if present):
-   - `minversion`: String - Minimum game version
-   - `maxversion`: String - Maximum game version
+## Paths on Civ5XP (Linux)
 
-2. DLC dependencies (if any):
-   - `id`: GUID - DLC identifier
-   - `minversion`: String - Minimum version
-   - `maxversion`: String - Maximum version
+`LoadModInfo` builds each file's `EvaluatedPath` by lower-casing the `<File>` text and appending it to the mod
+folder with `PathAppendW`. Civ5XP's `PathAppendW` shim joins with `\` and does nothing else. Every file open
+(`CreateFileW`, `_wfopen`, ...) then goes through `DOS2POSIXPathW` → `DOS2MacPath`:
 
-## Files Section
-Each `File` element requires:
-1. `import`: Integer (0 or 1) - Whether to import into VFS
-2. `md5`: String - MD5 hash (only for import="1")
-3. Text content: Path to file (Windows-style paths)
+- **Separators:** each `\` becomes `/`.
+- **Absolute paths:** in an absolute path, everything after `Aspyr/Sid Meier's Civilization 5/MODS` (or after
+  `steamassets`) is lower-cased.
+- **Relative paths:** these are lower-cased entirely.
 
-## Actions Section
-Organized by action sets (e.g., "OnModActivated", "OnGetDLLPath"):
-1. `UpdateDatabase`: Path to SQL or XML file
-2. `SetDllPath`: Path to DLL file
-
-## Entry Points Section
-Each `EntryPoint` requires:
-1. `type`: String - Type of entry point
-2. `file`: String - Path to file
-Optional elements:
-1. `Name`: String - Display name
-2. `Description`: String - Description
-
-## Property Order
-The Properties section should maintain this order:
-1. `Name`
-2. `Teaser`
-3. `Description`
-4. `Authors`
-5. `Homepage`
-6. `SupportsSinglePlayer`
-7. `SupportsMultiplayer`
-8. `SupportsHotSeat`
-9. `SupportsMac`
-10. `AffectsSavedGames`
-11. `MinCompatibleSaveVersion`
-12. `HideSetupGame` (if present)
-13. `ReloadAudioSystem`
-14. `ReloadLandmarkSystem`
-15. `ReloadStrategicViewSystem`
-16. `ReloadUnitSystem`
-
-## File Naming Convention
-The .modinfo file name should include the mod's name and version:
-```
-Mod Name (v X).modinfo
-```
-
-Example:
-```
-Community Patch (v 139).modinfo
-```
-
-Optional prefix numbers (e.g., "(1) ") may be included in the mod name if needed for load order:
-```
-(1) Community Patch (v 139).modinfo
-```
-
-## Notes
-- All paths should use Windows-style backslashes
-- GUIDs should be lowercase and enclosed in curly braces
-- File paths are relative to the mod's root directory
-- MD5 hashes should be uppercase
-- Boolean values are represented as "0" or "1"
-- The `References` section is always included but typically empty
-- Version numbers typically follow semantic versioning
-- Files with `import="1"` must have valid MD5 hashes
+So under `$XDG_DATA_HOME/Aspyr/Sid Meier's Civilization 5/MODS` (default `~/.local/share/...`) every folder and
+file name of a mod must be lower case on disk; the `.modinfo` text can keep its case.
