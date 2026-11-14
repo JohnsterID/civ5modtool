@@ -86,12 +86,26 @@ Line two</Description>
 """)
 
     def test_empty_sections_and_omitted_properties(self):
-        p = ModProject(name="Bare", mod_guid="0f0e0d0c-0b0a-4908-8706-050403020100")
+        p = ModProject(name="Bare", mod_guid="0f0e0d0c-0b0a-4908-8706-050403020100", affects_saves=False)
         text, _ = modinfo_text(p, self.tmp)
         for line in ("  <Dependencies />", "  <References />", "  <Blocks />", "  <Files>\n  </Files>"):
             self.assertIn(line, text)
         for absent in ("SpecialThanks", "Homepage", "MinCompatibleSaveVersion", "<Actions>", "<EntryPoints>"):
-            self.assertNotIn(absent, text)  # ModBuddy leaves them out when empty / "0"
+            self.assertNotIn(absent, text)  # left out when empty / "0" (MinCompatibleSaveVersion: style "vp" only)
+
+    def test_min_compatible_save_version_zero(self):
+        # The game's save loader needs the property on every mod with AffectsSavedGames=1,
+        # or loading a save drops mods. ModBuddy writes it even when 0 and the mod does not
+        # affect saves (e.g. Naval Mod v9); generate_modinfo.py leaves a 0 out.
+        tag = "    <AffectsSavedGames>{}</AffectsSavedGames>\n    <MinCompatibleSaveVersion>0</MinCompatibleSaveVersion>\n"
+        for affects, style, written in ((True, "vp", True), (False, "vp", False),
+                                        (True, "modbuddy", True), (False, "modbuddy", True)):
+            with self.subTest(affects=affects, style=style):
+                p = ModProject(name="Zero", mod_guid="0f0e0d0c-0b0a-4908-8706-050403020100", affects_saves=affects)
+                self.assertEqual(p.min_compatible_save_version, "0")
+                text, _ = modinfo_text(p, self.tmp, style=style)
+                self.assertEqual(tag.format(int(affects)) in text, written)
+                self.assertEqual("MinCompatibleSaveVersion" in text, written)
 
     def test_styles(self):
         out = self.tmp / "vp.modinfo"

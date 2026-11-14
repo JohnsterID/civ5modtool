@@ -12,6 +12,12 @@ The output is byte-identical to the references:
 | `modinfo2proj` (`.civ5proj`) | ModBuddy's project layout | VP's six `.modinfo` → `.civ5proj` → `.modinfo` give the same bytes, and the rebuilt project equals VP's own |
 | `.civ5sln` | ModBuddy's solution | byte-identical to ModBuddy's `Community Patch.civ5sln` |
 
+One deliberate difference from `generate_modinfo.py`: a mod with `AffectsSavedGames` 1 always gets
+`<MinCompatibleSaveVersion>`, also when it is 0 (the script leaves a 0 out). The game looks the property
+up for every such mod when it loads a save, and a mod without it makes the load drop mods. ModBuddy
+writes it for every mod, so `--style modbuddy` does too. VP's own mods that affect saves all have a
+non-zero value, so their output is unchanged.
+
 For VP's own release, upstream's `generate_modinfo.py` is the tool of record; modtools gives the
 same result and adds what that script does not do: converting a published `.modinfo` back into a
 ModBuddy project, refreshing MD5s in place, validating, comparing, Civ5XP (Linux) installs, and a GUI.

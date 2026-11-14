@@ -3,7 +3,9 @@
 The writer produces the same bytes as Vox Populi's scripts/generate_modinfo.py
 (style "vp": LF, newline at the end; checked against all six VP projects by
 tests/test_vp_repo.py) or as ModBuddy's own build (style "modbuddy": CRLF, no
-newline at the end; checked against a ModBuddy-built CP v139 file). Both: UTF-8
+newline at the end; checked against a ModBuddy-built CP v139 file). One
+difference from generate_modinfo.py: a mod that affects saved games always gets
+MinCompatibleSaveVersion, also when it is 0 (see modinfo_text). Both: UTF-8
 with BOM, two-space indent, "/" in file paths, an MD5 for every file, actions
 grouped by set in first-use order.
 """
@@ -107,7 +109,8 @@ def _section(lines: List[str], tag: str, assocs: List[Association], allowed) -> 
 STYLES = {"vp": ("\n", True), "modbuddy": ("\r\n", False)}  # newline, newline at the end
 
 
-def modinfo_text(p: ModProject, mod_dir: Path, final_newline: bool = True) -> Tuple[str, List[str]]:
+def modinfo_text(p: ModProject, mod_dir: Path, final_newline: bool = True,
+                 style: str = "vp") -> Tuple[str, List[str]]:
     """The .modinfo text (with "\\n" newlines) and the files that were not found
     under `mod_dir`. A missing file keeps the MD5 it was read with, if any, and
     is left out otherwise (as ModBuddy and generate_modinfo.py do)."""
@@ -125,7 +128,12 @@ def modinfo_text(p: ModProject, mod_dir: Path, final_newline: bool = True) -> Tu
     if p.homepage.strip():
         lines.append(f"    <Homepage>{escape_xml(p.homepage.strip())}</Homepage>")
     lines.append(f"    <AffectsSavedGames>{b(p.affects_saves)}</AffectsSavedGames>")
-    if p.min_compatible_save_version != "0":
+    # The game's save loader looks up MinCompatibleSaveVersion for every active mod
+    # with AffectsSavedGames=1; if one has no such property, loading a save made
+    # with it drops mods from the game. ModBuddy always writes it, also when 0.
+    # generate_modinfo.py leaves out a 0, which no VP mod that affects saves has;
+    # style "vp" keeps it whenever the mod affects saves.
+    if style == "modbuddy" or p.affects_saves or p.min_compatible_save_version != "0":
         lines.append(f"    <MinCompatibleSaveVersion>{escape_xml(p.min_compatible_save_version)}</MinCompatibleSaveVersion>")
     lines += [f"    <SupportsSinglePlayer>{b(p.supports_singleplayer)}</SupportsSinglePlayer>",
               f"    <SupportsMultiplayer>{b(p.supports_multiplayer)}</SupportsMultiplayer>",
@@ -184,6 +192,6 @@ def modinfo_text(p: ModProject, mod_dir: Path, final_newline: bool = True) -> Tu
 
 def write_modinfo(p: ModProject, output_path: Path, mod_dir: Path, style: str = "vp") -> List[str]:
     newline, final_newline = STYLES[style]
-    text, missing = modinfo_text(p, mod_dir, final_newline)
+    text, missing = modinfo_text(p, mod_dir, final_newline, style)
     write_text(output_path, text, newline)
     return missing
