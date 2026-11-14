@@ -2,8 +2,10 @@
 
 Formatting, file order and "/" vs "\\" are ignored; properties, associations,
 the file list (path, import flag, and MD5 when both sides carry one),
-actions (in order within each set) and entry points are compared.
+actions (with duplicates, and their order within each set) and entry points
+(with duplicates) are compared.
 """
+from collections import Counter
 from pathlib import Path
 from typing import List
 
@@ -23,6 +25,17 @@ def load(path: Path) -> ModProject:
 
 def _norm(path: str) -> str:
     return path.replace("\\", "/").strip().lower()
+
+
+def _only_in(kind: str, first: list, second: list) -> List[str]:
+    """Items one side has more often than the other (so a duplicate counts)."""
+    ca, cb = Counter(first), Counter(second)
+    out = []
+    for label, extra in (("first", ca - cb), ("second", cb - ca)):
+        for item in sorted(extra):
+            count = extra[item]
+            out.append(f"{kind}: only in {label}: {item}" + (f" (x{count})" if count > 1 else ""))
+    return out
 
 
 def compare_projects(a: ModProject, b: ModProject) -> List[str]:
@@ -56,16 +69,15 @@ def compare_projects(a: ModProject, b: ModProject) -> List[str]:
         if x.md5 and y.md5 and x.md5.upper() != y.md5.upper():
             diffs.append(f"files: md5 differs: {x.path}")
 
+    # Actions: as a multiset (a duplicate counts), then the order within each set; the
+    # order across sets does not matter (a .modinfo groups actions by set).
     act = lambda p: [(x.action_set, x.action_type, _norm(x.filename)) for x in p.actions]  # noqa: E731
-    if sorted(act(a)) != sorted(act(b)):
-        only_a = [x for x in act(a) if x not in act(b)]
-        only_b = [x for x in act(b) if x not in act(a)]
-        diffs += [f"actions: only in first: {x}" for x in only_a] + [f"actions: only in second: {x}" for x in only_b]
-    elif act(a) != act(b):
-        diffs.append("actions: same actions in a different order (database updates run in that order)")
+    diffs += _only_in("actions", act(a), act(b))
+    if Counter(act(a)) == Counter(act(b)):
+        for action_set in dict.fromkeys(x[0] for x in act(a)):
+            if [x for x in act(a) if x[0] == action_set] != [x for x in act(b) if x[0] == action_set]:
+                diffs.append(f"actions: {action_set}: same actions in a different order (they run in that order)")
 
-    ep = lambda p: sorted((x.type, _norm(x.file), x.name, x.description) for x in p.entry_points)  # noqa: E731
-    if ep(a) != ep(b):
-        diffs += [f"entry points: only in first: {x}" for x in ep(a) if x not in ep(b)]
-        diffs += [f"entry points: only in second: {x}" for x in ep(b) if x not in ep(a)]
+    ep = lambda p: [(x.type, _norm(x.file), x.name, x.description) for x in p.entry_points]  # noqa: E731
+    diffs += _only_in("entry points", ep(a), ep(b))
     return diffs
