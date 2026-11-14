@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import os
 import re
+import shutil
 import tempfile
 import unittest
 from html import unescape
@@ -48,6 +49,7 @@ class TestVoxPopuli(unittest.TestCase):
 
     def test_committed_modinfo_survives_a_civ5proj_roundtrip(self):
         tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
         for mi in sorted(REPO.glob("(*/*.modinfo")):
             with self.subTest(mi.parent.name):
                 committed = mi.read_bytes().decode("utf-8-sig").replace("\r\n", "\n")
@@ -61,6 +63,7 @@ class TestVoxPopuli(unittest.TestCase):
         # From VP's current .civ5proj, not its committed .modinfo: that one can lag the
         # project until VP's next release (files added since are missing from it).
         tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
         for proj in self.projects:
             with self.subTest(proj.parent.name):
                 original = read_civ5proj(proj)
