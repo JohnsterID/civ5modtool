@@ -133,13 +133,15 @@ class ModProject:
         from .civ5proj import read_civ5proj
         return read_civ5proj(Path(path))
 
-    def write_modinfo(self, output_path: Path, base_path: Optional[Path] = None, style: str = "vp"):
+    def write_modinfo(self, output_path: Path, base_path: Optional[Path] = None, style: str = "vp",
+                      newline: Optional[str] = None):
         """Write a .modinfo; files are hashed under `base_path` (default: the
         output's folder). style "vp" (LF, like VP's generate_modinfo.py) or
-        "modbuddy" (CRLF, like ModBuddy). Returns the files that could not be hashed."""
+        "modbuddy" (CRLF, like ModBuddy); `newline` overrides the line ending.
+        Returns the files that could not be hashed."""
         from .modinfo import write_modinfo
         output_path = Path(output_path)
-        return write_modinfo(self, output_path, Path(base_path) if base_path else output_path.parent, style)
+        return write_modinfo(self, output_path, Path(base_path) if base_path else output_path.parent, style, newline)
 
     def write_civ5proj(self, output_path: Path, create_solution: bool = True, newline: str = "\r\n") -> Path:
         """Write a .civ5proj exactly at `output_path`, and create or update the

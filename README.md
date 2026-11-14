@@ -57,6 +57,11 @@ Exit status: 0 ok; 1 problems found (validation errors, stale MD5s with `--check
 - Listed paths are matched to files case-insensitively when the exact case is not on disk, as Windows does,
   so a Windows-cased `.modinfo` still hashes and validates against a lower-cased copy on Linux.
 
+The GUI (`modtools gui`) saves a `.modinfo` in the format it was opened in: ModBuddy's (no newline
+after `</Mod>`) or VP's, with the file's own line endings; File > .modinfo format changes it, and a new
+mod starts in VP's. It asks before closing, New or Open discards unsaved changes, and Validate offers to
+save first, since it checks the file on disk.
+
 ## Civ5XP (Linux)
 
 Civ5XP, Aspyr's Linux build, opens every file through `DOS2POSIXPathW` → `DOS2MacPath`:

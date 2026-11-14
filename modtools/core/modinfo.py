@@ -10,7 +10,7 @@ with BOM, two-space indent, "/" in file paths, an MD5 for every file, actions
 grouped by set in first-use order.
 """
 from pathlib import Path, PureWindowsPath
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
 from .models import Action, Association, EntryPoint, FileEntry, ModProject
@@ -190,8 +190,19 @@ def modinfo_text(p: ModProject, mod_dir: Path, final_newline: bool = True,
     return "\n".join(lines), missing
 
 
-def write_modinfo(p: ModProject, output_path: Path, mod_dir: Path, style: str = "vp") -> List[str]:
-    newline, final_newline = STYLES[style]
+def modinfo_format(path: Path) -> Tuple[str, str]:
+    """How an existing .modinfo was written: (style, newline). ModBuddy ends the
+    file right after </Mod>, generate_modinfo.py with a newline; the line ending
+    is kept separately, since a Windows checkout of VP's LF files has CRLF."""
+    data = Path(path).read_bytes()
+    return ("vp" if data.endswith(b"\n") else "modbuddy"), ("\r\n" if b"\r\n" in data else "\n")
+
+
+def write_modinfo(p: ModProject, output_path: Path, mod_dir: Path, style: str = "vp",
+                  newline: Optional[str] = None) -> List[str]:
+    """Write a .modinfo in `style`; `newline` overrides the style's line ending."""
+    style_newline, final_newline = STYLES[style]
+    newline = newline or style_newline
     text, missing = modinfo_text(p, mod_dir, final_newline, style)
     write_text(output_path, text, newline)
     return missing
