@@ -1,0 +1,58 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Mod id="0f0e0d0c-0b0a-4908-8706-050403020100" version="3">
+  <Properties>
+    <Name>(7) Test Mod</Name>
+    <Teaser>A &lt;test&gt; &amp; "quote"</Teaser>
+    <Description>Line one
+Line two</Description>
+    <Authors>Me</Authors>
+    <SpecialThanks>You</SpecialThanks>
+    <HideSetupGame>0</HideSetupGame>
+    <Homepage>https://example.com/?a=1&amp;b=2</Homepage>
+    <AffectsSavedGames>1</AffectsSavedGames>
+    <MinCompatibleSaveVersion>2</MinCompatibleSaveVersion>
+    <SupportsSinglePlayer>1</SupportsSinglePlayer>
+    <SupportsMultiplayer>1</SupportsMultiplayer>
+    <SupportsHotSeat>1</SupportsHotSeat>
+    <SupportsMac>1</SupportsMac>
+    <ReloadAudioSystem>0</ReloadAudioSystem>
+    <ReloadLandmarkSystem>0</ReloadLandmarkSystem>
+    <ReloadStrategicViewSystem>0</ReloadStrategicViewSystem>
+    <ReloadUnitSystem>1</ReloadUnitSystem>
+  </Properties>
+  <Dependencies>
+    <Game minversion="1.0.3.124" maxversion="1.0.3.999" />
+    <Dlc id="7459BA32-5764-44ae-8E95-01AD0E0EFD48" minversion="0" maxversion="999" />
+    <Mod id="d1b6328c-ff44-4b0d-aad7-c657f83610cd" minversion="151" maxversion="999" title="(1) Community Patch" />
+  </Dependencies>
+  <References>
+    <Mod id="8411a7a8-dad3-4622-a18e-fcc18324c799" minversion="17" maxversion="999" title="(2) Vox Populi" />
+  </References>
+  <Blocks>
+    <Mod id="11111111-2222-3333-4444-555555555555" minversion="0" maxversion="999" title="Old Mod" />
+  </Blocks>
+  <Files>
+    <File md5="587DE76529284D0DAF8EB02B14B10712" import="1">Lua/Main.lua</File>
+    <File md5="4F4CC834CFBE38C850ADB291BF5B086D" import="0">SQL/Changes.sql</File>
+    <File md5="A5FFA2C5196762333E6DD82EB27DC283" import="0">Text/en_US/Text.xml</File>
+    <File md5="063CF9FC3AC1639B76BBC017A36E28A6" import="1">UI/Addin.xml</File>
+    <File md5="C1F4831E3AB9FEBACAA256E8EB1FF179" import="1">Maps/Small &amp; Wet.lua</File>
+  </Files>
+  <Actions>
+    <OnModActivated>
+      <UpdateDatabase>SQL/Changes.sql</UpdateDatabase>
+      <UpdateDatabase>Text\en_US\Text.xml</UpdateDatabase>
+    </OnModActivated>
+  </Actions>
+  <EntryPoints>
+    <EntryPoint type="InGameUIAddin" file="UI\Addin.xml">
+      <Name>Addin</Name>
+      <Description>The addin</Description>
+    </EntryPoint>
+    <EntryPoint type="MapScript" file="Maps/Small &amp; Wet.lua">
+      <Name>Small &amp; Wet</Name>
+      <Description>
+      </Description>
+    </EntryPoint>
+  </EntryPoints>
+</Mod>

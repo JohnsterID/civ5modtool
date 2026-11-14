@@ -1,13 +1,15 @@
 """The .modinfo reader and writer."""
 import hashlib
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
+from modtools.core.compare import compare_projects
 from modtools.core.modinfo import modinfo_text, read_modinfo, write_modinfo
 from modtools.core.models import FileEntry, ModProject
 from modtools.core.xmltext import parse_bool
-from tests.helpers import FILES, make_mod
+from tests.helpers import FILES, MODBUDDY_VARIANTS, make_mod, make_variant
 
 DATA = Path(__file__).parent / "data"
 CP139 = DATA / "(1) Community Patch (v 139).modinfo"
@@ -95,11 +97,11 @@ Line two</Description>
 
     def test_min_compatible_save_version_zero(self):
         # The game's save loader needs the property on every mod with AffectsSavedGames=1,
-        # or loading a save drops mods. ModBuddy writes it even when 0 and the mod does not
-        # affect saves (e.g. Naval Mod v9); generate_modinfo.py leaves a 0 out.
+        # or loading a save drops mods. ModBuddy writes it exactly when the mod affects
+        # saves (also when 0); generate_modinfo.py leaves a 0 out.
         tag = "    <AffectsSavedGames>{}</AffectsSavedGames>\n    <MinCompatibleSaveVersion>0</MinCompatibleSaveVersion>\n"
         for affects, style, written in ((True, "vp", True), (False, "vp", False),
-                                        (True, "modbuddy", True), (False, "modbuddy", True)):
+                                        (True, "modbuddy", True), (False, "modbuddy", False)):
             with self.subTest(affects=affects, style=style):
                 p = ModProject(name="Zero", mod_guid="0f0e0d0c-0b0a-4908-8706-050403020100", affects_saves=affects)
                 self.assertEqual(p.min_compatible_save_version, "0")
@@ -166,6 +168,31 @@ class TestReader(unittest.TestCase):
                                 ("yes", None), ("", None), (None, None), ("2", True)]:
             self.assertEqual(parse_bool(value, None), expected, value)
 
+
+
+class TestModBuddyBuilds(unittest.TestCase):
+    """Test mods built by ModBuddy itself (tools/modbuddy_refs.py): --style modbuddy
+    must give the same bytes."""
+
+    def test_same_bytes_as_modbuddy(self):
+        for variant in MODBUDDY_VARIANTS:
+            with self.subTest(variant):
+                tmp = Path(tempfile.mkdtemp())
+                self.addCleanup(shutil.rmtree, tmp, True)
+                out = tmp / "out.modinfo"
+                write_modinfo(make_variant(tmp, variant), out, tmp, "modbuddy")
+                self.assertEqual(out.read_bytes(), (DATA / "modbuddy" / f"{variant}.modinfo").read_bytes())
+
+    def test_reading_a_modbuddy_build_gives_the_project(self):
+        for variant in MODBUDDY_VARIANTS:
+            with self.subTest(variant):
+                tmp = Path(tempfile.mkdtemp())
+                self.addCleanup(shutil.rmtree, tmp, True)
+                project = make_variant(tmp, variant)
+                diffs = compare_projects(project, read_modinfo(DATA / "modbuddy" / f"{variant}.modinfo"))
+                if variant == "no-saves":  # ModBuddy leaves the property out: read back as 0
+                    diffs.remove("min_save_version: '5' != '0'")
+                self.assertEqual(diffs, [])
 
 if __name__ == "__main__":
     unittest.main()

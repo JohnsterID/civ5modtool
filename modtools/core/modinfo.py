@@ -14,11 +14,17 @@ from typing import List, Optional, Tuple
 import xml.etree.ElementTree as ET
 
 from .models import Action, Association, EntryPoint, FileEntry, ModProject
-from .xmltext import escape_xml, md5_of, mod_file_path, parse_bool, write_text
+from .xmltext import escape_text, escape_xml, md5_of, mod_file_path, parse_bool, write_text
 
 
 def _text(elem, default: str = "") -> str:
     return elem.text if elem is not None and elem.text is not None else default
+
+
+def _ep_text(elem) -> str:
+    """Entry point Name/Description; ModBuddy writes an empty one as a line break."""
+    value = _text(elem)
+    return "" if not value.strip() else value
 
 
 def _assoc_from_attrs(elem) -> Association:
@@ -82,7 +88,7 @@ def read_modinfo(path: Path) -> ModProject:
     eps = root.find("EntryPoints")
     for ep in (eps if eps is not None else []):
         p.entry_points.append(EntryPoint(type=ep.get("type", ""), file=ep.get("file", ""),
-                                         name=_text(ep.find("Name")), description=_text(ep.find("Description"))))
+                                         name=_ep_text(ep.find("Name")), description=_ep_text(ep.find("Description"))))
     return p
 
 
@@ -115,26 +121,32 @@ def modinfo_text(p: ModProject, mod_dir: Path, final_newline: bool = True,
     under `mod_dir`. A missing file keeps the MD5 it was read with, if any, and
     is left out otherwise (as ModBuddy and generate_modinfo.py do)."""
     b = lambda v: "1" if v else "0"  # noqa: E731
+    text = escape_text if style == "modbuddy" else escape_xml  # element text; attributes always escape quotes
+    # an empty entry point Name/Description: ModBuddy writes a line break and the closing tag's indent
+    ep_text = (lambda v: text(v) or "\n      ") if style == "modbuddy" else text  # noqa: E731
     lines = ['<?xml version="1.0" encoding="utf-8"?>',
              f'<Mod id="{escape_xml(p.mod_guid)}" version="{escape_xml(p.version)}">',
              "  <Properties>",
-             f"    <Name>{escape_xml(p.name)}</Name>",
-             f"    <Teaser>{escape_xml(p.teaser)}</Teaser>",
-             f"    <Description>{escape_xml(p.description)}</Description>",
-             f"    <Authors>{escape_xml(p.authors)}</Authors>"]
+             f"    <Name>{text(p.name)}</Name>",
+             f"    <Teaser>{text(p.teaser)}</Teaser>",
+             f"    <Description>{text(p.description)}</Description>",
+             f"    <Authors>{text(p.authors)}</Authors>"]
+    if style == "modbuddy":  # ModBuddy leaves out an empty Teaser or Authors
+        lines = [x for x in lines if x not in ("    <Teaser></Teaser>", "    <Authors></Authors>")]
     if p.special_thanks.strip():
-        lines.append(f"    <SpecialThanks>{escape_xml(p.special_thanks.strip())}</SpecialThanks>")
+        lines.append(f"    <SpecialThanks>{text(p.special_thanks.strip())}</SpecialThanks>")
     lines.append(f"    <HideSetupGame>{b(p.hide_setup_game)}</HideSetupGame>")
     if p.homepage.strip():
-        lines.append(f"    <Homepage>{escape_xml(p.homepage.strip())}</Homepage>")
+        lines.append(f"    <Homepage>{text(p.homepage.strip())}</Homepage>")
     lines.append(f"    <AffectsSavedGames>{b(p.affects_saves)}</AffectsSavedGames>")
     # The game's save loader looks up MinCompatibleSaveVersion for every active mod
     # with AffectsSavedGames=1; if one has no such property, loading a save made
-    # with it drops mods from the game. ModBuddy always writes it, also when 0.
-    # generate_modinfo.py leaves out a 0, which no VP mod that affects saves has;
-    # style "vp" keeps it whenever the mod affects saves.
-    if style == "modbuddy" or p.affects_saves or p.min_compatible_save_version != "0":
-        lines.append(f"    <MinCompatibleSaveVersion>{escape_xml(p.min_compatible_save_version)}</MinCompatibleSaveVersion>")
+    # with it drops mods from the game. ModBuddy writes it exactly when the mod
+    # affects saves (any value, 0 too). generate_modinfo.py writes it when it is
+    # not 0, so a 0 is lost even for a mod that affects saves (no VP mod has that);
+    # style "vp" also keeps it whenever the mod affects saves.
+    if p.affects_saves if style == "modbuddy" else (p.affects_saves or p.min_compatible_save_version != "0"):
+        lines.append(f"    <MinCompatibleSaveVersion>{text(p.min_compatible_save_version)}</MinCompatibleSaveVersion>")
     lines += [f"    <SupportsSinglePlayer>{b(p.supports_singleplayer)}</SupportsSinglePlayer>",
               f"    <SupportsMultiplayer>{b(p.supports_multiplayer)}</SupportsMultiplayer>",
               f"    <SupportsHotSeat>{b(p.supports_hotseat)}</SupportsHotSeat>",
@@ -160,7 +172,7 @@ def modinfo_text(p: ModProject, mod_dir: Path, final_newline: bool = True,
                 continue
             md5 = f.md5
         game_path = str(PureWindowsPath(f.path)).replace("\\", "/")
-        lines.append(f'    <File md5="{md5}" import="{b(f.import_to_vfs)}">{escape_xml(game_path)}</File>')
+        lines.append(f'    <File md5="{md5}" import="{b(f.import_to_vfs)}">{text(game_path)}</File>')
     lines.append("  </Files>")
 
     if p.actions:
@@ -173,16 +185,16 @@ def modinfo_text(p: ModProject, mod_dir: Path, final_newline: bool = True,
             lines.append(f"    <{action_set}>")
             for a in p.actions:
                 if a.action_set == action_set:
-                    lines.append(f"      <{a.action_type}>{escape_xml(a.filename)}</{a.action_type}>")
+                    lines.append(f"      <{a.action_type}>{text(a.filename)}</{a.action_type}>")
             lines.append(f"    </{action_set}>")
         lines.append("  </Actions>")
 
     if p.entry_points:
         lines.append("  <EntryPoints>")
         for ep in p.entry_points:
-            lines += [f'    <EntryPoint type="{escape_xml(ep.type)}" file="{escape_xml(ep.file.replace(chr(92), "/"))}">',
-                      f"      <Name>{escape_xml(ep.name)}</Name>",
-                      f"      <Description>{escape_xml(ep.description)}</Description>",
+            lines += [f'    <EntryPoint type="{escape_xml(ep.type)}" file="{escape_xml(ep.file if style == "modbuddy" else ep.file.replace(chr(92), "/"))}">',
+                      f"      <Name>{ep_text(ep.name)}</Name>",
+                      f"      <Description>{ep_text(ep.description)}</Description>",
                       "    </EntryPoint>"]
         lines.append("  </EntryPoints>")
 

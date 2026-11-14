@@ -13,6 +13,13 @@ def escape_xml(text: str) -> str:
                 .replace(">", "&gt;").replace('"', "&quot;"))
 
 
+def escape_text(text: str) -> str:
+    """Escape element text the way ModBuddy's build does: &, < and > (quotes stay)."""
+    if not text:
+        return ""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def parse_bool(value, default: bool) -> bool:
     """Booleans as the game reads them (FXmlNVPair::GetVal(bool&)): a value
     starting with t/T is true, f/F false, otherwise a number (0 = false)."""

@@ -83,5 +83,19 @@ class TestValidate(unittest.TestCase):
         self.assertEqual(validate_path(self.tmp / "x.txt")[0].severity, "error")
 
 
+    def test_affects_saves_without_min_compatible_save_version(self):
+        text = self.modinfo.read_text(encoding="utf-8-sig")
+        self.assertIn("<MinCompatibleSaveVersion>2</MinCompatibleSaveVersion>", text)
+        warning = "AffectsSavedGames is 1 but there is no <MinCompatibleSaveVersion>"
+        self.assertFalse([m for m in messages(validate_path(self.modinfo)) if warning in m])
+        missing = text.replace("    <MinCompatibleSaveVersion>2</MinCompatibleSaveVersion>\n", "")
+        self.modinfo.write_text(missing, encoding="utf-8-sig")
+        self.assertEqual(len([m for m in messages(validate_path(self.modinfo), "warning") if warning in m]), 1)
+        # not when the mod does not affect saves, or does not say (then the game does not check it)
+        for affects in ("<AffectsSavedGames>0</AffectsSavedGames>", ""):
+            self.modinfo.write_text(missing.replace("<AffectsSavedGames>1</AffectsSavedGames>", affects),
+                                    encoding="utf-8-sig")
+            self.assertFalse([m for m in messages(validate_path(self.modinfo)) if warning in m], affects)
+
 if __name__ == "__main__":
     unittest.main()

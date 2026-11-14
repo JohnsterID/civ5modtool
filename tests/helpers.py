@@ -35,3 +35,27 @@ def make_mod(folder: Path) -> ModProject:
         entry_points=[EntryPoint("InGameUIAddin", r"UI\Addin.xml", "Addin", "The addin"),
                       EntryPoint("MapScript", "Maps/Small & Wet.lua", "Small & Wet", "")],
     )
+
+
+def _empty_texts(p: ModProject) -> None:
+    # every optional text empty, no associations (ModBuddy needs a Description to build)
+    p.teaser = p.authors = p.special_thanks = p.homepage = ""
+    p.description = "D"
+    p.dependencies, p.references, p.blockers = [], [], []
+    for ep in p.entry_points:
+        ep.name = ep.description = ""
+
+
+def _no_saves(p: ModProject) -> None:
+    p.affects_saves, p.min_save_version = False, "5"
+
+
+# Variants of make_mod built by ModBuddy for tests/data/modbuddy (tools/modbuddy_refs.py)
+MODBUDDY_VARIANTS = {"full": lambda p: None, "empty-texts": _empty_texts, "no-saves": _no_saves}
+
+
+def make_variant(folder: Path, variant: str) -> ModProject:
+    p = make_mod(folder)
+    MODBUDDY_VARIANTS[variant](p)
+    return p
+

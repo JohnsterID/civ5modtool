@@ -8,15 +8,15 @@ The output is byte-identical to the references:
 | Command | Reference | Checked by |
 |---|---|---|
 | `proj2modinfo` (default `--style vp`) | Vox Populi's `scripts/generate_modinfo.py` | `tests/test_vp_repo.py`, all six VP mods (CI, weekly) |
-| `proj2modinfo --style modbuddy` | ModBuddy's own build output | `tests/test_modinfo.py`, a ModBuddy-built CP v139 `.modinfo` |
+| `proj2modinfo --style modbuddy` | ModBuddy's own build output | `tests/test_modinfo.py`: a ModBuddy-built CP v139 `.modinfo`, and test mods built by ModBuddy (`tests/data/modbuddy/`) |
 | `modinfo2proj` (`.civ5proj`) | ModBuddy's project layout | VP's six `.modinfo` → `.civ5proj` → `.modinfo` give the same bytes, and the rebuilt project equals VP's own |
 | `.civ5sln` | ModBuddy's solution | byte-identical to ModBuddy's `Community Patch.civ5sln` |
 
 One deliberate difference from `generate_modinfo.py`: a mod with `AffectsSavedGames` 1 always gets
 `<MinCompatibleSaveVersion>`, also when it is 0 (the script leaves a 0 out). The game looks the property
 up for every such mod when it loads a save, and a mod without it makes the load drop mods. ModBuddy
-writes it for every mod, so `--style modbuddy` does too. VP's own mods that affect saves all have a
-non-zero value, so their output is unchanged.
+writes it exactly for the mods that affect saves, and so does `--style modbuddy`. VP's own mods that
+affect saves all have a non-zero value, so their output is unchanged.
 
 For VP's own release, upstream's `generate_modinfo.py` is the tool of record; modtools gives the
 same result and adds what that script does not do: converting a published `.modinfo` back into a
@@ -26,7 +26,7 @@ It runs on Windows and Linux; upstream's script only resolves its `\` paths on W
 ## Install
 
 ```bash
-pip install .
+pip install .            # installs the package civ5modtool and the command modtools
 ```
 
 ## Commands
@@ -93,6 +93,8 @@ in `modtools/core/validate.py` and `docs/modinfo_schema.md`:
   error 16 on a mismatch). Mods in the MODS folder load without any MD5 check, so for them a stale MD5 is a
   warning.
 - A `<File>` without `import` counts as `import="1"`.
+- A mod with `AffectsSavedGames` 1 needs `<MinCompatibleSaveVersion>` (0 for none): loading a save made
+  with a mod that lacks it drops mods from the game. `validate` warns about it.
 - Booleans: `t…`/`T…` true, `f…`/`F…` false, otherwise a number, so `1`/`0` and `true`/`false` both work.
 - Action types the game runs: `UpdateDatabase`, `UpdateUserData`, `ExecuteScript`, `SetDllPath`; action sets:
   `OnModActivated`, `OnGetDLLPath`, `OnCreateModUserData`. Anything else is ignored.

@@ -20,6 +20,9 @@ Linux builds behave the same):
   points are joined to the file list with ModEntryPoints.File = ModFiles.Path,
   an exact string match: the file attribute must equal the <File> text,
   same slashes and case.
+* A mod with AffectsSavedGames 1 needs a MinCompatibleSaveVersion property
+  (0 for none): loading a save looks it up for every such mod, and a mod
+  without it makes the load drop mods.
 * Civ5XP (Linux) lower-cases every path below MODS when it opens a file
   (DOS2MacPath), so there every name must be lower case on disk
   (validate_civ5xp, civ5xp=True / --civ5xp).
@@ -34,7 +37,7 @@ from .civ5proj import NS, _child, _children, main_property_group, read_civ5proj
 from .civ5xp import case_problems
 from .modinfo import read_modinfo
 from .solution import ModSolution
-from .xmltext import md5_of, mod_file_path
+from .xmltext import md5_of, mod_file_path, parse_bool
 
 GUID = re.compile(r"^\{?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}?$")
 MOD_SECTIONS = ("ModReferences", "ModDependencies", "ModBlockers", "ModActions", "ModContent")
@@ -142,6 +145,11 @@ def validate_modinfo(path: Path, packaged: bool = False) -> List[Issue]:
             node = props.find(tag)
             if node is not None and not _is_bool(node.text):
                 issues.append(Issue("warning", f"<{tag}> is {node.text!r}, not a boolean (0/1 or true/false)"))
+        affects = props.find("AffectsSavedGames")
+        if (affects is not None and parse_bool(affects.text, False)
+                and props.find("MinCompatibleSaveVersion") is None):
+            issues.append(Issue("warning", "AffectsSavedGames is 1 but there is no <MinCompatibleSaveVersion>: loading a "
+                                           "save made with this mod drops mods from the game (write 0 for no minimum)"))
     files = root.find("Files")
     exact = set()
     for f in (files if files is not None else []):

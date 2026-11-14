@@ -26,7 +26,7 @@ the end (modtools `--style modbuddy` / `--style vp`).
     <HideSetupGame>0</HideSetupGame>
     <Homepage>...</Homepage>                      <!-- only if not empty -->
     <AffectsSavedGames>1</AffectsSavedGames>
-    <MinCompatibleSaveVersion>151</MinCompatibleSaveVersion>   <!-- if not 0 or AffectsSavedGames is 1; modbuddy: always -->
+    <MinCompatibleSaveVersion>151</MinCompatibleSaveVersion>   <!-- vp: if not 0 or AffectsSavedGames is 1; modbuddy: if AffectsSavedGames is 1 -->
     <SupportsSinglePlayer>1</SupportsSinglePlayer>
     <SupportsMultiplayer>1</SupportsMultiplayer>
     <SupportsHotSeat>1</SupportsHotSeat>
